@@ -117,9 +117,10 @@
     <!-- disconnect overlay -->
     <div class="overlay" id="disc-ov" hidden>
         <div class="ov-card">
-            <h2>⚠️ Disconnected</h2>
+            <h2 id="disc-title">⚠️ Disconnected</h2>
             <p id="disc-msg">The connection was closed.</p>
-            <button class="btn btn-primary" id="disc-btn">Reload to start a new connection</button>
+            <pre id="disc-diag" class="diag" hidden></pre>
+            <button class="btn btn-primary" id="disc-btn">Try again</button>
         </div>
     </div>
 

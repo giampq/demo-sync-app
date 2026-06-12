@@ -55,10 +55,13 @@ const DUMMY_RATIO = 0.25;         // anti-tracking: extra fake chunks
 const BUF_HIGH = 8 * 1024 * 1024; // backpressure: pause when send buffer > 8 MB
 const BUF_LOW = 1 * 1024 * 1024;  // resume when drained below 1 MB
 const ICE_TIMEOUT = 8000;         // ms to wait for ICE gathering before encoding
+const FAIL_GRACE = 6000;          // ms to wait on 'disconnected' before declaring failure
 
 // ═══════════════════════ STATE ══════════════════════════════
 let pc = null, dc = null;
 let isInitiator = false;
+let wasConnected = false, failed = false, failTimer = null;
+let diag = { host: 0, srflx: 0, relay: 0, prflx: 0, errors: [] };
 let dirHandle = null;
 let myFolderReady = false, peerFolderReady = false;
 let syncReady = false, cryptoReady = false, isTransferring = false;
@@ -173,19 +176,39 @@ function unpackSDP(o) {
     ];
     return { type, sdp: lines.join('\r\n') + '\r\n' };
 }
+function warnIfNoRelay() {
+    console.log('[ICE] gathered for code →', candSummary());
+    if (diag.relay === 0)
+        toast('⚠️ No TURN relay gathered — connecting across different networks may fail', 'warn', 6000);
+}
 async function encodeDesc(desc) { return gzip(JSON.stringify(packSDP(desc))); }
 async function decodeDesc(code) { return unpackSDP(JSON.parse(await gunzip(code.trim()))); }
 
 // ═══════════════════════ WEBRTC ═════════════════════════════
+function candSummary() { return `host=${diag.host} srflx=${diag.srflx} relay=${diag.relay} prflx=${diag.prflx}`; }
+
 function newPeer(initiator) {
     isInitiator = initiator;
+    wasConnected = false; failed = false; clearTimeout(failTimer);
+    diag = { host: 0, srflx: 0, relay: 0, prflx: 0, errors: [] };
     pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    pc.onconnectionstatechange = () => {
-        const s = pc.connectionState;
-        console.log('[PC]', s);
-        if (s === 'connected') setConn('ok', 'Connected');
-        if (s === 'failed' || s === 'disconnected' || s === 'closed') onDisconnect(s);
+
+    // ── Diagnostics: which candidate types we manage to gather ──
+    pc.onicecandidate = e => {
+        if (!e.candidate) { console.log('[ICE] gathering complete →', candSummary()); return; }
+        const t = (e.candidate.candidate.match(/ typ (\S+)/) || [])[1] || 'unknown';
+        if (t in diag) diag[t]++;
+        console.log(`[ICE] candidate (${t}): ${e.candidate.candidate}`);
     };
+    // ── Diagnostics: STUN/TURN server errors (e.g. 401 = bad TURN creds) ──
+    pc.onicecandidateerror = e => {
+        diag.errors.push({ url: e.url, code: e.errorCode, text: e.errorText });
+        console.warn(`[ICE] candidate error: code=${e.errorCode} "${e.errorText}" @ ${e.url}`);
+    };
+    pc.oniceconnectionstatechange = () => console.log('[ICE] iceConnectionState =', pc.iceConnectionState);
+    pc.onicegatheringstatechange = () => console.log('[ICE] iceGatheringState =', pc.iceGatheringState);
+    pc.onconnectionstatechange = () => handleConnState(pc.connectionState);
+
     if (initiator) setupDC(pc.createDataChannel('file', { ordered: true }));
     else pc.ondatachannel = e => setupDC(e.channel);
     return pc;
@@ -195,11 +218,72 @@ function setupDC(channel) {
     dc = channel;
     dc.binaryType = 'arraybuffer';
     dc.onopen = onConnected;
-    dc.onclose = () => onDisconnect('closed');
+    dc.onclose = () => surfaceFailure('closed');
     dc.onmessage = e => {
         if (typeof e.data === 'string') handleControl(JSON.parse(e.data));
         else handleBinary(e.data);
     };
+}
+
+// ── Connection state machine: tolerate transient drops, surface real failures ──
+function handleConnState(s) {
+    console.log('[PC]', s, '|', candSummary());
+    if (s === 'connected') {
+        wasConnected = true; failed = false; clearTimeout(failTimer);
+        setConn('ok', 'Connected');
+    } else if (s === 'disconnected') {
+        // Transient — WebRTC often self-heals. Wait before declaring failure.
+        setConn('warn', 'Connection lost — trying to recover...');
+        clearTimeout(failTimer);
+        failTimer = setTimeout(() => {
+            if (pc && pc.connectionState !== 'connected') surfaceFailure('disconnected');
+        }, FAIL_GRACE);
+    } else if (s === 'failed') {
+        surfaceFailure('failed');
+    } else if (s === 'closed') {
+        surfaceFailure('closed');
+    }
+}
+
+// ── Turn a raw failure into a human-readable cause ──
+function diagnose() {
+    const authErr = diag.errors.find(e => e.code === 401 || e.code === 403);
+    if (authErr)
+        return `A TURN server rejected the credentials (HTTP ${authErr.code}). The free TURN is likely down or its credentials changed — add a working TURN server in ICE_SERVERS.`;
+    if (diag.srflx === 0 && diag.relay === 0)
+        return 'Could not reach any STUN or TURN server. Check the internet connection / firewall on both devices.';
+    if (diag.relay === 0)
+        return 'Direct connection failed and no TURN relay was available — likely a strict/symmetric NAT while the free TURN server was unreachable. Add a working TURN server (e.g. ExpressTURN) in ICE_SERVERS.';
+    return 'Direct connection failed and even the TURN relay did not work — the relay may be overloaded or blocked. Try a different TURN server, then try again.';
+}
+
+function surfaceFailure(reason) {
+    if (failed) return;
+    failed = true;
+    clearTimeout(failTimer);
+
+    const peerClosed = reason === 'closed' && wasConnected;
+    setConn('err', peerClosed ? 'Disconnected' : 'Connection failed');
+
+    if (peerClosed) {
+        $('disc-title').textContent = '⚠️ Disconnected';
+        $('disc-msg').textContent = 'The other device disconnected.';
+        $('disc-diag').hidden = true;
+    } else {
+        $('disc-title').textContent = '❌ Connection failed';
+        $('disc-msg').textContent = diagnose();
+        const tech = `Reason: ${reason}\n`
+            + `ICE state: ${pc?.iceConnectionState}\n`
+            + `Candidates gathered: ${candSummary()}\n`
+            + (diag.errors.length
+                ? 'STUN/TURN errors:\n' + diag.errors.map(e => `  • [${e.code}] ${e.text || ''} @ ${e.url}`).join('\n')
+                : 'No STUN/TURN errors reported.');
+        const dg = $('disc-diag');
+        dg.textContent = tech;
+        dg.hidden = false;
+        console.warn('[PC] failure diagnostics:\n' + tech);
+    }
+    $('disc-ov').hidden = false;
 }
 
 function waitIce(pc) {
@@ -222,17 +306,6 @@ function onConnected() {
     initECDH();
 }
 
-function onDisconnect(reason) {
-    if ($('disc-ov').hidden === false) return;
-    setConn('err', 'Disconnected');
-    if ($('page-room').classList.contains('active')) {
-        $('disc-msg').textContent = reason === 'closed'
-            ? 'The other device disconnected.'
-            : 'The connection was interrupted.';
-        $('disc-ov').hidden = false;
-    }
-}
-
 // ═══════════════════════ CONNECT UI FLOW ════════════════════
 async function startCreate() {
     $('choose').hidden = true;
@@ -244,6 +317,7 @@ async function startCreate() {
         await pc.setLocalDescription(offer);
         await waitIce(pc);
         $('my-offer').value = await encodeDesc(pc.localDescription);
+        warnIfNoRelay();
         setConn('warn', 'Waiting for reply code...');
     } catch (e) { toast('Error creating code: ' + e.message, 'error', 6000); }
 }
@@ -275,6 +349,7 @@ async function makeAnswer() {
         await pc.setLocalDescription(ans);
         await waitIce(pc);
         $('my-answer').value = await encodeDesc(pc.localDescription);
+        warnIfNoRelay();
         $('answer-out').hidden = false;
         $('btn-answer').disabled = true;
         setConn('warn', 'Waiting for connection...');

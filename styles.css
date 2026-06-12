@@ -187,7 +187,14 @@ textarea:focus { border-color: var(--accent) }
     border-radius: var(--radius); padding: 30px; max-width: 360px; width: 90%; text-align: center;
 }
 .ov-card h2 { margin-bottom: 8px; color: var(--red) }
-.ov-card p { color: var(--text); margin-bottom: 22px; font-size: .9rem }
+.ov-card p { color: var(--text); margin-bottom: 18px; font-size: .9rem }
+.diag {
+    text-align: left; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 11px 13px; margin-bottom: 18px;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .72rem;
+    color: var(--muted); white-space: pre-wrap; word-break: break-all;
+    max-height: 180px; overflow: auto;
+}
 
 /* toasts */
 .toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 300 }
