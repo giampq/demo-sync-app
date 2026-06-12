@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>Demo TURN</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <div class="app">
+        <header>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                <polyline points="13 2 13 9 20 9" />
+            </svg>
+            <h1>Demo <span>TURN</span></h1>
+            <div class="hdr-right">
+                <div class="enc-badge" id="enc-badge">🔒 E2E</div>
+                <div class="conn-pill warn" id="conn-pill">
+                    <span class="conn-dot"></span><span id="conn-text">Not connected</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- ── PAGE: CONNECT ─────────────────────────────── -->
+            <section class="page active" id="page-connect">
+                <div class="card">
+                    <div class="card-title">Connect two devices</div>
+
+                    <!-- choose role -->
+                    <div id="choose">
+                        <p class="hint">Pick a role. One person <b>Creates</b>, the other <b>Joins</b>.</p>
+                        <button class="btn btn-primary btn-full" id="btn-create">📤 Create connection (Device A)</button>
+                        <button class="btn btn-ghost btn-full" id="btn-join" style="margin-top:10px">📥 Join (Device B)</button>
+                    </div>
+
+                    <!-- CREATE flow -->
+                    <div id="create-flow" hidden>
+                        <div class="stepline"><span class="num">1</span> Your code — send it to the other device</div>
+                        <div class="code-box">
+                            <textarea id="my-offer" readonly placeholder="Generating code..."></textarea>
+                            <button class="btn btn-sm btn-ghost copy-btn" data-copy="my-offer">Copy</button>
+                        </div>
+                        <div class="stepline"><span class="num">2</span> Paste the reply code from the other device</div>
+                        <div class="code-box">
+                            <textarea id="their-answer" placeholder="Paste the reply code here..."></textarea>
+                        </div>
+                        <button class="btn btn-primary btn-full" id="btn-finish">Finish connection</button>
+                    </div>
+
+                    <!-- JOIN flow -->
+                    <div id="join-flow" hidden>
+                        <div class="stepline"><span class="num">1</span> Paste the code from the inviter</div>
+                        <div class="code-box">
+                            <textarea id="their-offer" placeholder="Paste the code from Device A..."></textarea>
+                        </div>
+                        <button class="btn btn-primary btn-full" id="btn-answer">Generate reply code</button>
+                        <div id="answer-out" hidden>
+                            <div class="stepline"><span class="num">2</span> Reply code — send it back to them</div>
+                            <div class="code-box">
+                                <textarea id="my-answer" readonly></textarea>
+                                <button class="btn btn-sm btn-ghost copy-btn" data-copy="my-answer">Copy</button>
+                            </div>
+                            <div class="srow info" id="join-wait">⏳ Reply code ready. Send it back and wait for the connection...</div>
+                        </div>
+                    </div>
+                </div>
+                <p class="hint center">The code is exchanged once over any channel (chat, email). After that, files travel <b>directly device ↔ device</b>, with no server in between.</p>
+            </section>
+
+            <!-- ── PAGE: ROOM ────────────────────────────────── -->
+            <section class="page" id="page-room">
+                <div class="srow crypto" id="crypto-row">🔐 <span id="crypto-msg">Setting up encryption...</span></div>
+
+                <div class="peer-panel">
+                    <div class="peer-card" id="my-pc">
+                        <div class="lbl">You</div>
+                        <div class="folder" id="my-folder-lbl">No folder selected</div>
+                    </div>
+                    <div class="peer-card" id="peer-pc">
+                        <div class="lbl">Peer</div>
+                        <div class="folder" id="peer-folder-lbl">No folder selected</div>
+                    </div>
+                </div>
+
+                <!-- step 1: folder -->
+                <div class="card" id="folder-sec">
+                    <div class="card-title">Step 1 — Choose a folder</div>
+                    <div class="srow info">📂 Choose a folder to save files. Requires Chrome or Edge.</div>
+                    <button class="btn btn-primary btn-full" id="pick-btn">Choose Folder</button>
+                    <div class="srow ok" id="folder-ok" hidden><span id="folder-name-lbl"></span></div>
+                </div>
+
+                <!-- step 2: send -->
+                <div class="card" id="sync-sec" hidden>
+                    <div class="card-title">Step 2 — Send file (.zip)</div>
+                    <div class="drop-zone locked" id="drop-zone">
+                        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        <p id="drop-label"><strong>Waiting...</strong></p>
+                        <p class="muted">.zip only</p>
+                    </div>
+                    <div id="tf-list"></div>
+                </div>
+
+                <button class="btn btn-ghost btn-sm" id="leave-btn">← Disconnect</button>
+            </section>
+        </main>
+    </div>
+
+    <!-- disconnect overlay -->
+    <div class="overlay" id="disc-ov" hidden>
+        <div class="ov-card">
+            <h2>⚠️ Disconnected</h2>
+            <p id="disc-msg">The connection was closed.</p>
+            <button class="btn btn-primary" id="disc-btn">Reload to start a new connection</button>
+        </div>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    <input type="file" id="file-input" accept=".zip" hidden />
+
+    <script src="app.js"></script>
+</body>
+
+</html>
