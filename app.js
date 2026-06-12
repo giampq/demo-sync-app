@@ -32,23 +32,22 @@ const ICE_SERVERS = [
     // Hourly-refreshed list of live STUN servers (add more if needed):
     //   https://github.com/pradt2/always-online-stun
 
-    // ── TURN (free, NO signup) ───────────────────────────────
-    // freestun.net — shared 'free'/'free' credentials. Best-effort, may be slow.
-    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
-    { urls: 'turns:freestun.net:5350', username: 'free', credential: 'free' }, // TLS, better at traversing firewalls
+    // ── TURN (primary) — ExpressTURN, free 1000 GB/month ─────
+    // Tried first; port 443/TLS variant looks like HTTPS so it traverses
+    // strict firewalls best. https://www.expressturn.com/
+    { urls: 'turn:free.expressturn.com:3478', username: '000000002096594260', credential: 'yYh/3kEDc/skIQDbyMrip+1ozCc=' },
+    { urls: 'turn:free.expressturn.com:3478?transport=tcp', username: '000000002096594260', credential: 'yYh/3kEDc/skIQDbyMrip+1ozCc=' },
+    { urls: 'turns:free.expressturn.com:443?transport=tcp', username: '000000002096594260', credential: 'yYh/3kEDc/skIQDbyMrip+1ozCc=' },
 
-    // ── TURN (free but requires a free signup for credentials) ──
-    // Sign up once, paste the credentials here for a more reliable relay.
-    // Each source backs up the others — fill in whichever you have.
-    //
-    // 1) ExpressTURN — free 1000 GB/month. https://www.expressturn.com/
-    // { urls: 'turn:relay1.expressturn.com:3478', username: 'YOUR_USER', credential: 'YOUR_PASS' },
-    //
-    // 2) Metered Open Relay — free tier. https://www.metered.ca/tools/openrelay/
-    // { urls: 'turn:standard.relay.metered.ca:80',  username: 'YOUR_USER', credential: 'YOUR_PASS' },
-    // { urls: 'turn:standard.relay.metered.ca:443', username: 'YOUR_USER', credential: 'YOUR_PASS' },
-    // { urls: 'turns:standard.relay.metered.ca:443?transport=tcp', username: 'YOUR_USER', credential: 'YOUR_PASS' },
+    // ── TURN (backup, no signup) — freestun.net, best-effort ─
+    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+    { urls: 'turns:freestun.net:5350', username: 'free', credential: 'free' },
 ];
+
+// Debug: open the page with ?relay to FORCE all traffic through TURN.
+// If it connects in this mode, your TURN server works; if not, the problem
+// is DNS/VPN/firewall reaching the TURN host (not NAT).
+const FORCE_RELAY = new URLSearchParams(location.search).has('relay');
 
 const CHUNK = 16 * 1024;          // 16 KB plaintext — safe DataChannel message size
 const DUMMY_RATIO = 0.25;         // anti-tracking: extra fake chunks
@@ -191,7 +190,11 @@ function newPeer(initiator) {
     isInitiator = initiator;
     wasConnected = false; failed = false; clearTimeout(failTimer);
     diag = { host: 0, srflx: 0, relay: 0, prflx: 0, errors: [] };
-    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    pc = new RTCPeerConnection({
+        iceServers: ICE_SERVERS,
+        iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all',
+    });
+    if (FORCE_RELAY) console.log('[ICE] FORCE_RELAY mode — TURN only');
 
     // ── Diagnostics: which candidate types we manage to gather ──
     pc.onicecandidate = e => {
